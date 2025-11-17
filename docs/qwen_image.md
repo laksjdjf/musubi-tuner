@@ -379,6 +379,9 @@ python src/musubi_tuner/qwen_image_generate_image.py \
 - Memory saving options like `--fp8_scaled` (for DiT) are available.
 - `--text_encoder_cpu` enables CPU inference for the text encoder. Recommended for systems with limited GPU resources (less than 16GB VRAM).
 - LoRA loading options (`--lora_weight`, `--lora_multiplier`) are available.
+- `--text_pos_encoding_type`: Specifies the text position encoding type. Two modes are available:
+  - `max` (default): Uses (長辺, 長辺, 長辺) - the maximum dimension for all three position encoding dimensions. This is the standard behavior.
+  - `specific`: Uses (長辺, 最右, 最下) - (max_dimension, width, height) for (frame, height, width) position encodings respectively. This may provide different generation characteristics.
 
 You can specify the discrete flow shift using `--flow_shift`. If omitted, the default value (dynamic shifting based on the image size) will be used.
 
@@ -403,6 +406,9 @@ Qwen-Imageの推論は専用のスクリプト`qwen_image_generate_image.py`を�
 - DiTのメモリ使用量を削減するために、`--fp8_scaled`オプションを指定可能です。
 - `--text_encoder_cpu`を指定するとテキストエンコーダーをCPUで推論します。GPUのVRAMが16GB未満のシステムでは、CPU推論を推奨します。
 - LoRAの読み込みオプション（`--lora_weight`、`--lora_multiplier`）が利用可能です。
+- `--text_pos_encoding_type`: テキストの位置エンコーディングのタイプを指定します。2つのモードが利用可能です:
+  - `max`（デフォルト）: (長辺, 長辺, 長辺) を使用します - 3つすべての位置エンコーディング次元に最大次元を使用します。これが標準的な動作です。
+  - `specific`: (長辺, 最右, 最下) を使用します - (frame, height, width) の位置エンコーディングにそれぞれ (max_dimension, width, height) を使用します。これにより異なる生成特性が得られる可能性があります。
 
 `--flow_shift`を指定することで、離散フローシフトを設定できます。省略すると、デフォルト値（画像サイズに基づく動的シフト）が使用されます。
 
