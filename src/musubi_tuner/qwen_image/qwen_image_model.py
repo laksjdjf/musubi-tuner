@@ -265,7 +265,7 @@ class QwenTimestepProjEmbeddings(nn.Module):
 
 
 class QwenEmbedRope(nn.Module):
-    def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
+    def __init__(self, theta: int, axes_dim: List[int], scale_rope=False, text_pos_encoding_type: str = "max"):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
@@ -291,6 +291,7 @@ class QwenEmbedRope(nn.Module):
 
         # DO NOT USE REGISTER BUFFER HERE, IT WILL CAUSE COMPLEX NUMBERS TO LOSE THEIR IMAGINARY PART
         self.scale_rope = scale_rope
+        self.text_pos_encoding_type = text_pos_encoding_type  # "max" or "specific"
 
     def rope_params(self, index, dim, theta=10000):
         """
@@ -318,6 +319,8 @@ class QwenEmbedRope(nn.Module):
 
         vid_freqs = []
         max_vid_index = 0
+        max_height = 0
+        max_width = 0
         for idx, fhw in enumerate(video_fhw):
             frame, height, width = fhw
             rope_key = f"{idx}_{height}_{width}"
@@ -330,11 +333,32 @@ class QwenEmbedRope(nn.Module):
 
             if self.scale_rope:
                 max_vid_index = max(height // 2, width // 2, max_vid_index)
+                max_height = max(height // 2, max_height)
+                max_width = max(width // 2, max_width)
             else:
                 max_vid_index = max(height, width, max_vid_index)
+                max_height = max(height, max_height)
+                max_width = max(width, max_width)
 
         max_len = max(txt_seq_lens)
-        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + max_len, ...]
+        
+        if self.text_pos_encoding_type == "specific":
+            # Use (長辺, 最右, 最下) = (max_vid_index, max_width, max_height)
+            # Construct text freqs with specific position encodings for each dimension
+            freqs_pos = self.pos_freqs.split([x // 2 for x in self.axes_dim], dim=1)
+            
+            # Frame dimension: use max_vid_index (same as before)
+            txt_freqs_frame = freqs_pos[0][max_vid_index : max_vid_index + max_len, ...]
+            # Height dimension: use max_width (最右 = rightmost)
+            txt_freqs_height = freqs_pos[1][max_width : max_width + max_len, ...]
+            # Width dimension: use max_height (最下 = bottommost)
+            txt_freqs_width = freqs_pos[2][max_height : max_height + max_len, ...]
+            
+            txt_freqs = torch.cat([txt_freqs_frame, txt_freqs_height, txt_freqs_width], dim=-1)
+        else:
+            # Default "max" behavior: use (長辺, 長辺, 長辺) = (max_vid_index, max_vid_index, max_vid_index)
+            txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + max_len, ...]
+        
         vid_freqs = torch.cat(vid_freqs, dim=0)
 
         return vid_freqs, txt_freqs
@@ -988,6 +1012,7 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
         attn_mode: str = "torch",
         split_attn: bool = False,
+        text_pos_encoding_type: str = "max",
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -996,7 +1021,7 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
         self.attn_mode = attn_mode
         self.split_attn = split_attn
 
-        self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)
+        self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True, text_pos_encoding_type=text_pos_encoding_type)
 
         self.time_text_embed = QwenTimestepProjEmbeddings(embedding_dim=self.inner_dim)
 
@@ -1222,7 +1247,7 @@ FP8_OPTIMIZATION_EXCLUDE_KEYS = [
 
 
 def create_model(
-    attn_mode: str, split_attn: bool, dtype: Optional[torch.dtype], num_layers: Optional[int] = 60
+    attn_mode: str, split_attn: bool, dtype: Optional[torch.dtype], num_layers: Optional[int] = 60, text_pos_encoding_type: str = "max"
 ) -> QwenImageTransformer2DModel:
     with init_empty_weights():
         logger.info(f"Creating QwenImageTransformer2DModel")
@@ -1260,6 +1285,7 @@ def create_model(
             axes_dims_rope=(16, 56, 56),
             attn_mode=attn_mode,
             split_attn=split_attn,
+            text_pos_encoding_type=text_pos_encoding_type,
         )
         if dtype is not None:
             model.to(dtype)
@@ -1278,6 +1304,7 @@ def load_qwen_image_model(
     lora_multipliers: Optional[List[float]] = None,
     num_layers: Optional[int] = 60,
     disable_numpy_memmap: bool = False,
+    text_pos_encoding_type: str = "max",
 ) -> QwenImageTransformer2DModel:
     """
     Load a WAN model from the specified checkpoint.
@@ -1295,6 +1322,7 @@ def load_qwen_image_model(
         lora_multipliers (Optional[List[float]]): LoRA multipliers for the weights, if any.
         num_layers (int): Number of layers in the DiT model.
         disable_numpy_memmap (bool): Whether to disable numpy memory mapping when loading weights.
+        text_pos_encoding_type (str): Type of text position encoding ("max" or "specific"). Default is "max".
     """
     # dit_weight_dtype is None for fp8_scaled
     assert (not fp8_scaled and dit_weight_dtype is not None) or (fp8_scaled and dit_weight_dtype is None)
@@ -1302,7 +1330,7 @@ def load_qwen_image_model(
     device = torch.device(device)
     loading_device = torch.device(loading_device)
 
-    model = create_model(attn_mode, split_attn, dit_weight_dtype, num_layers=num_layers)
+    model = create_model(attn_mode, split_attn, dit_weight_dtype, num_layers=num_layers, text_pos_encoding_type=text_pos_encoding_type)
 
     # load model weights with dynamic fp8 optimization and LoRA merging if needed
     logger.info(f"Loading DiT model from {dit_path}, device={loading_device}")

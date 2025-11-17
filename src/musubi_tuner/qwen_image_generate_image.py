@@ -62,6 +62,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vae", type=str, default=None, help="VAE directory or path")
     parser.add_argument("--vae_enable_tiling", action="store_true", help="Enable tiling for VAE decoding. Default is False.")
     parser.add_argument("--text_encoder", type=str, required=True, help="Text Encoder 1 (Qwen2.5-VL) directory or path")
+    parser.add_argument(
+        "--text_pos_encoding_type",
+        type=str,
+        default="max",
+        choices=["max", "specific"],
+        help="Text position encoding type. 'max': use (長辺, 長辺, 長辺), 'specific': use (長辺, 最右, 最下). Default is 'max'."
+    )
 
     # LoRA
     parser.add_argument("--lora_weight", type=str, nargs="*", required=False, default=None, help="LoRA weight path")
@@ -352,6 +359,7 @@ def load_dit_model(
         lora_multipliers=args.lora_multiplier,
         num_layers=args.num_layers,
         disable_numpy_memmap=args.disable_numpy_memmap,
+        text_pos_encoding_type=args.text_pos_encoding_type,
     )
 
     # merge LoRA weights
